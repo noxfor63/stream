@@ -31,6 +31,14 @@ function argument(name, position) {
 const port = argument('-port', 1);
 const uuid = argument('-pluginUUID', 3);
 const registration = argument('-registerEvent', 5);
+// Some hosts omit device in individual key events on a single-panel profile.
+let singleDevice = 'default';
+try {
+  const devices = JSON.parse(argument('-info', 7) || '{}').devices;
+  if (Array.isArray(devices) && devices.length) singleDevice = devices.length === 1 ? (devices[0].id || 'default') : null;
+} catch {
+  singleDevice = null;
+}
 trace('host startup');
 if (!/^\d{1,5}$/.test(port) || Number(port) > 65535 || !uuid || !registration) {
   trace('host invalid launch arguments');
@@ -39,7 +47,10 @@ if (!/^\d{1,5}$/.test(port) || Number(port) > 65535 || !uuid || !registration) {
 const dock = new WebSocket('ws://127.0.0.1:' + port);
 const actions = new Map(manifest.Actions.map(({UUID}) => [UUID, UUID.split('.').pop()]));
 const supportedActions = new Set(actions.values());
-const cards = new Set();
+const cards = new Map();
+const displayed = new Map();
+const volumeTimers = new Map();
+let layoutVersion = 0;
 const pressedContexts = new Set();
 const waiting = [];
 let watchdog;
@@ -47,7 +58,6 @@ let worker;
 let retry;
 let pending = false;
 let stopping = false;
-let previousImage;
 let lastTrackStatus;
 
 function send(event, context, payload = {}) {
@@ -61,27 +71,38 @@ function watchForReply() {
     worker?.kill();
   }, 15000);
 }
-function request(action, context) {
+function request(action, context, fields = {}) {
   if (!worker?.stdin.writable) {
     if (context) send('showAlert', context);
     return false;
   }
   waiting.push(context);
   if (waiting.length === 1) watchForReply();
-  worker.stdin.write(JSON.stringify({action, context}) + '\n');
+  worker.stdin.write(JSON.stringify({action, context, ...fields}) + '\n');
   return true;
 }
 function refresh() {
-  if (cards.size && !pending) pending = request('track');
+  if (cards.size && !pending) {
+    pending = request('track', undefined, {layoutVersion, cards: [...cards.values()]});
+  }
 }
-function display(image, title) {
-  const key = image || title;
-  if (key === previousImage) return;
-  for (const context of cards) {
+function display(tiles, title) {
+  for (const context of cards.keys()) {
+    const image = tiles?.[context] || '';
+    const key = image || title;
+    if (displayed.get(context) === key) continue;
+    displayed.set(context, key);
     send('setImage', context, {target: 0, image});
     send('setTitle', context, {target: 0, title});
   }
-  previousImage = key;
+}
+function volumeFeedback(context, title) {
+  clearTimeout(volumeTimers.get(context));
+  send('setTitle', context, {target: 0, title});
+  volumeTimers.set(context, setTimeout(() => {
+    send('setTitle', context, {target: 0, title: ''});
+    volumeTimers.delete(context);
+  }, 1800));
 }
 function startWorker() {
   const executable = path.join(appDir, 'venv', 'Scripts', 'python.exe');
@@ -117,13 +138,23 @@ function startWorker() {
     watchForReply();
     if (result.action === 'track') {
       pending = false;
-      const image = result.image || '';
-      const status = result.error ? 'error ' + errorCode(result.error) : image ? 'available' : 'no track';
+      if (result.layoutVersion !== layoutVersion) {
+        refresh();
+        return;
+      }
+      const hasTrack = result.tiles && Object.keys(result.tiles).length > 0;
+      const status = result.error ? 'error ' + errorCode(result.error) : hasTrack ? 'available' : 'no track';
       if (status !== lastTrackStatus) trace('player track ' + status);
       lastTrackStatus = status;
-      display(image, result.error ? 'Сбой плагина' : image ? '' : 'Нет трека');
+      display(result.tiles, result.error ? 'Сбой плагина' : hasTrack ? '' : 'Нет трека');
     } else if (supportedActions.has(result.action)) {
       trace('player ' + result.action + (result.error ? ' error ' + errorCode(result.error) : ' ok'));
+      if (['louder', 'quieter'].includes(result.action) && Number.isInteger(result.level)) {
+        trace('volume ' + errorCode(result.source) + ' ' + result.level + '%');
+        volumeFeedback(result.context, result.level + '%');
+      } else if (result.error === 'NoAppVolumeSlider') {
+        volumeFeedback(result.context, 'Открой ЯМ');
+      }
       if (result.error) send('showAlert', result.context);
     }
   });
@@ -134,19 +165,25 @@ dock.on('open', () => {
   startWorker();
 });
 dock.on('message', raw => {
-  const {event, action, context} = JSON.parse(raw);
+  const {event, action, context, payload, device} = JSON.parse(raw);
   const name = actions.get(action);
   if (!name) return;
   if (event === 'willAppear' || event === 'willDisappear' || event === 'keyDown' || event === 'keyUp') {
     trace('host ' + event + ' ' + name);
   }
   if (name === 'track') {
-    if (event === 'willAppear') {
-      cards.add(context);
-      previousImage = undefined;
-      send('setTitle', context, {target: 0, title: worker ? 'Загрузка…' : 'Сбой плагина'});
+    if (event === 'willAppear' || (event === 'didReceiveSettings' && cards.has(context) && payload?.coordinates)) {
+      cards.set(context, {context, device: device ?? cards.get(context)?.device ?? singleDevice,
+        column: payload?.coordinates?.column, row: payload?.coordinates?.row});
+      displayed.delete(context);
+      layoutVersion++;
       refresh();
-    } else if (event === 'willDisappear') cards.delete(context);
+    } else if (event === 'willDisappear') {
+      cards.delete(context);
+      displayed.delete(context);
+      layoutVersion++;
+      refresh();
+    }
   } else if (event === 'keyDown') {
     pressedContexts.add(context);
     request(name, context);
@@ -154,6 +191,8 @@ dock.on('message', raw => {
     if (!pressedContexts.delete(context)) request(name, context);
   } else if (event === 'willDisappear') {
     pressedContexts.delete(context);
+    clearTimeout(volumeTimers.get(context));
+    volumeTimers.delete(context);
   }
 });
 const timer = setInterval(refresh, 1500);
@@ -163,5 +202,6 @@ dock.on('close', () => {
   trace('host disconnected');
   clearTimeout(retry);
   clearInterval(timer);
+  for (const timer of volumeTimers.values()) clearTimeout(timer);
   worker?.kill();
 });

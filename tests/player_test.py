@@ -107,36 +107,74 @@ class MediaActions(unittest.IsolatedAsyncioTestCase):
         self.browser.try_skip_next_async.assert_not_awaited()
 
 
-class MixerActions(unittest.TestCase):
-    def test_separate_outputs_only_change_music_sessions(self):
-        def audio(name):
-            mixer = Mock()
-            mixer.GetMasterVolume.return_value = 0.99
-            return SimpleNamespace(State=1, Process=SimpleNamespace(name=lambda: name), SimpleAudioVolume=mixer)
+class CoverLayouts(unittest.TestCase):
+    def test_four_keys_make_one_canvas_on_the_same_device(self):
+        def keys(name, coords):
+            return [dict(device=name, row=y, column=x, context=f"{name}:{x},{y}") for x,y in coords]
+        block = keys("deck", [(1,2), (2,2), (1,1), (2,1)])
+        others = keys("second", [(2,2)]) + keys("deck", [(4,2)])
+        art = Image.new("RGB", (288, 288))
+        for x, y, color in [(0,0,"red"), (144,0,"green"), (0,144,"blue"), (144,144,"yellow")]:
+            art.paste(color, (x, y, x+144, y+144))
+        buf = BytesIO()
+        art.save(buf, "PNG")
+        args = ("Название", "Исполнитель", buf.getvalue(), "DejaVuSans.ttf")
+        tiles = player.card_tiles(*args, block + others)
+        combined = Image.new("RGB", (288,288))
+        for c in block:
+            tile = Image.open(BytesIO(base64.b64decode(tiles[c["context"]].split(",")[1])))
+            combined.paste(tile, ((c["column"]-1)*144, (c["row"]-1)*144))
+        self.assertEqual(combined.tobytes(), player.card_canvas(*args, 2, 2).tobytes())
+        self.assertEqual(combined.getpixel((180, 20)), (0,128,0))
+        fallback = player.png(player.card_canvas(*args, 1, 1))
+        self.assertTrue(all(tiles[c["context"]] == fallback for c in others))
 
-        def output(*sessions):
-            items = [Mock(QueryInterface=Mock(return_value=s)) for s in sessions]
-            enumerator = Mock(GetCount=lambda: len(items), GetSession=items.__getitem__)
-            return Mock(AudioSessionManager=Mock(GetSessionEnumerator=lambda: enumerator))
+    def test_partial_rectangle_and_missing_coordinates_remain_readable(self):
+        cards = [dict(context=str(i), device="a", column=x, row=y)
+                 for i, (x,y) in enumerate([(0,0),(0,1),(1,0)])]
+        cards.append({"context":"no-position"})
+        self.assertEqual([(w,h) for w,h,_ in player.rectangles(cards)], [(1,1)]*4)
 
-        browser, yandex = audio("chrome.exe"), audio("Яндекс Музыка.exe")
-        api = SimpleNamespace(
-            AudioUtilities=Mock(GetAllDevices=Mock(return_value=[output(browser), output(yandex)])),
-            EDataFlow=SimpleNamespace(eRender=SimpleNamespace(value=0)),
-            DEVICE_STATE=SimpleNamespace(ACTIVE=SimpleNamespace(value=1)),
-            IAudioSessionControl2=object(),
-            AudioSession=lambda control: control,
-        )
-        modules = {"comtypes": SimpleNamespace(COMError=OSError), "pycaw.pycaw": api,
-                   "psutil": SimpleNamespace(NoSuchProcess=ProcessLookupError, AccessDenied=PermissionError)}
-        with patch.dict(sys.modules, modules):
-            player.volume(0.05)
-            api.AudioUtilities.GetAllDevices.assert_called_once_with(0, 1)
-            yandex.SimpleAudioVolume.SetMasterVolume.assert_called_once_with(1, None)
-            yandex.SimpleAudioVolume.GetMasterVolume.return_value = 0.02
-            player.volume(-0.05)
-        browser.SimpleAudioVolume.SetMasterVolume.assert_not_called()
-        yandex.SimpleAudioVolume.SetMasterVolume.assert_called_with(0, None)
+
+class AppVolumeActions(unittest.TestCase):
+    def test_app_slider_uses_its_own_scale_and_reports_confirmed_volume(self):
+        for maximum in (1, 100):
+            slider = SimpleNamespace(CurrentMinimum=0, CurrentMaximum=maximum, CurrentValue=maximum/2)
+            slider.SetValue = lambda level: setattr(slider, "CurrentValue", level)
+            with patch.object(player, "app_volume_slider", return_value=slider), \
+                 patch.dict(sys.modules, {"comtypes": SimpleNamespace(COMError=OSError)}):
+                self.assertEqual(player.volume(0.05), {"source": "app", "level": 55})
+                self.assertEqual(player.volume(-0.05), {"source": "app", "level": 50})
+
+    def test_find_volume_slider_confines_search_to_music_and_skips_seek(self):
+        def collection(*elements):
+            return SimpleNamespace(Length=len(elements), GetElement=elements.__getitem__)
+        foreign = Mock(CurrentProcessId=99)
+        seek = Mock(CurrentName="Позиция воспроизведения")
+        volume_slider = Mock(CurrentName="Управление громкостью")
+        writeable = SimpleNamespace(CurrentIsReadOnly=False, CurrentMinimum=0, CurrentMaximum=1)
+        volume_slider.GetCurrentPattern.return_value.QueryInterface.return_value = writeable
+        music = Mock(CurrentProcessId=3, FindAll=Mock(return_value=collection(seek, volume_slider)))
+        automation = Mock()
+        automation.GetRootElement.return_value.FindAll.return_value = collection(foreign, music)
+        processes = [SimpleNamespace(pid=3, info={"name":"Яндекс Музыка.exe"}),
+                     SimpleNamespace(pid=99, info={"name":"chrome.exe"})]
+        modules = {"psutil": SimpleNamespace(process_iter=lambda _: processes), "comtypes": SimpleNamespace(COMError=OSError)}
+        with patch.dict(sys.modules, modules), patch.object(player, "automation_client", return_value=(automation, Mock())):
+            self.assertIs(player.app_volume_slider(), writeable)
+            foreign.FindAll.assert_not_called()
+            seek.GetCurrentPattern.assert_not_called()
+            automation.CreatePropertyCondition.assert_called_once_with(30003, 50015)
+
+    def test_unconfirmed_or_inaccessible_slider_reports_failure(self):
+        slider = SimpleNamespace(CurrentMinimum=0, CurrentMaximum=1, CurrentValue=0.5, SetValue=Mock())
+        with patch.object(player.time, "sleep"), patch.object(player, "app_volume_slider", return_value=slider):
+            with self.assertRaises(player.PlayerDeclinedCommand):
+                player.volume(-0.05)
+        slider.SetValue.assert_called_once()
+        with patch.object(player.time, "sleep"), patch.object(player, "app_volume_slider", return_value=None):
+            with self.assertRaises(player.NoAppVolumeSlider):
+                player.volume(0.05)
 
 
 if __name__ == "__main__":

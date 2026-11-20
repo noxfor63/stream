@@ -45,27 +45,6 @@ async def media_report(player):
             print("Идентификатор приложения Яндекса:", name)
 
 
-def audio_report(player):
-    import psutil
-
-    matched = 0
-    related = set()
-    for session in player.audio_sessions():
-        try:
-            if player.is_music_audio(session):
-                matched += 1
-            process = session.Process
-            if process:
-                name = public_id(process.name())
-                if "yandex" in name.casefold() or "яндекс" in name.casefold():
-                    related.add(name)
-        except (psutil.Error, OSError):
-            continue
-    print(f"Аудиосессий, которыми может управлять плагин: {matched}")
-    for name in sorted(related):
-        print("Аудиопроцесс Яндекса:", name)
-
-
 def show_trace():
     log = Path(os.environ["LOCALAPPDATA"]) / "Noxfor63" / "YandexMusicDock" / "dock.log"
     if not log.is_file():
@@ -108,9 +87,14 @@ def main():
             except Exception as exc:
                 print("Ошибка при чтении медиасессий Windows:", problem(exc))
             try:
-                audio_report(player)
+                slider = player.app_volume_slider()
+                if slider:
+                    percent = round(100 * (slider.CurrentValue - slider.CurrentMinimum) / (slider.CurrentMaximum - slider.CurrentMinimum))
+                    print(f"Ползунок громкости в Яндекс Музыке: {percent}%")
+                else:
+                    print("Ползунок не найден. Откройте окно Яндекс Музыки и покажите регулятор громкости.")
             except Exception as exc:
-                print("Ошибка при чтении аудиосессий Windows:", problem(exc))
+                print("Ошибка чтения ползунка приложения:", problem(exc))
     except Exception as exc:
         print("Ошибка инициализации Windows Runtime:", problem(exc))
 

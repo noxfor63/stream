@@ -111,7 +111,7 @@
   "Category": "Яндекс Музыка",
   "CategoryIcon": "icons/track.png",
   "CodePathWin": "index.js",
-  "Version": "1.1.0",
+  "Version": "1.2.0",
   "OS": [
     {
       "Platform": "windows",
