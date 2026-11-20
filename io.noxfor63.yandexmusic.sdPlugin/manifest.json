@@ -1,0 +1,127 @@
+{
+  "Actions": [
+    {
+      "UUID": "io.noxfor63.yandexmusic.track",
+      "Name": "Текущий трек",
+      "Tooltip": "Текущий трек",
+      "Icon": "icons/track.png",
+      "States": [
+        {
+          "Image": "icons/track.png",
+          "FontSize": "9"
+        }
+      ],
+      "Controllers": [
+        "Keypad"
+      ],
+      "UserTitleEnabled": false,
+      "SupportedInMultiActions": false
+    },
+    {
+      "UUID": "io.noxfor63.yandexmusic.previous",
+      "Name": "Предыдущий трек",
+      "Tooltip": "Предыдущий трек",
+      "Icon": "icons/previous.png",
+      "States": [
+        {
+          "Image": "icons/previous.png",
+          "FontSize": "9"
+        }
+      ],
+      "Controllers": [
+        "Keypad"
+      ],
+      "UserTitleEnabled": false,
+      "SupportedInMultiActions": false
+    },
+    {
+      "UUID": "io.noxfor63.yandexmusic.toggle",
+      "Name": "Воспроизведение / пауза",
+      "Tooltip": "Воспроизведение / пауза",
+      "Icon": "icons/toggle.png",
+      "States": [
+        {
+          "Image": "icons/toggle.png",
+          "FontSize": "9"
+        }
+      ],
+      "Controllers": [
+        "Keypad"
+      ],
+      "UserTitleEnabled": false,
+      "SupportedInMultiActions": false
+    },
+    {
+      "UUID": "io.noxfor63.yandexmusic.next",
+      "Name": "Следующий трек",
+      "Tooltip": "Следующий трек",
+      "Icon": "icons/next.png",
+      "States": [
+        {
+          "Image": "icons/next.png",
+          "FontSize": "9"
+        }
+      ],
+      "Controllers": [
+        "Keypad"
+      ],
+      "UserTitleEnabled": false,
+      "SupportedInMultiActions": false
+    },
+    {
+      "UUID": "io.noxfor63.yandexmusic.quieter",
+      "Name": "Тише",
+      "Tooltip": "Тише",
+      "Icon": "icons/quieter.png",
+      "States": [
+        {
+          "Image": "icons/quieter.png",
+          "FontSize": "9"
+        }
+      ],
+      "Controllers": [
+        "Keypad"
+      ],
+      "UserTitleEnabled": false,
+      "SupportedInMultiActions": false
+    },
+    {
+      "UUID": "io.noxfor63.yandexmusic.louder",
+      "Name": "Громче",
+      "Tooltip": "Громче",
+      "Icon": "icons/louder.png",
+      "States": [
+        {
+          "Image": "icons/louder.png",
+          "FontSize": "9"
+        }
+      ],
+      "Controllers": [
+        "Keypad"
+      ],
+      "UserTitleEnabled": false,
+      "SupportedInMultiActions": false
+    }
+  ],
+  "SDKVersion": 3,
+  "Author": "noxfor63",
+  "Name": "Яндекс Музыка",
+  "Description": "Управление приложением Яндекс Музыки для Windows",
+  "Icon": "icons/track.png",
+  "Category": "Яндекс Музыка",
+  "CategoryIcon": "icons/track.png",
+  "CodePathWin": "index.js",
+  "Version": "1.0.0",
+  "OS": [
+    {
+      "Platform": "windows",
+      "MinimumVersion": "10"
+    }
+  ],
+  "Software": {
+    "MinimumVersion": "3.10.188.226"
+  },
+  "Nodejs": {
+    "Version": "20"
+  }
+}
