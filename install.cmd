@@ -1,6 +1,7 @@
 @echo off
 setlocal EnableExtensions
 set "PLUGIN=io.noxfor63.yandexmusic.sdPlugin"
+set "DEST=%APPDATA%\HotSpot\StreamDock\plugins\%PLUGIN%"
 set "VENV=%LOCALAPPDATA%\Noxfor63\YandexMusicDock\venv"
 set "USER_PYTHON=%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
 set "CHECK=import sys, sysconfig; sys.exit(0 if sys.version_info[:2] == (3, 12) and sysconfig.get_platform() == 'win-amd64' else 1)"
@@ -24,7 +25,11 @@ if errorlevel 1 goto need_python
 :dependencies
 "%VENV%\Scripts\python.exe" -m pip install -r "%~dp0%PLUGIN%\requirements.txt" || goto fail
 "%VENV%\Scripts\python.exe" "%~dp0%PLUGIN%\player.py" --check || goto fail
-xcopy "%~dp0%PLUGIN%" "%APPDATA%\HotSpot\StreamDock\plugins\%PLUGIN%\" /E /I /Y >nul || goto fail
+if not exist "%DEST%" mkdir "%DEST%" || goto fail
+xcopy "%~dp0%PLUGIN%\*" "%DEST%" /E /I /Y >nul || goto fail
+fc /b "%~dp0%PLUGIN%\manifest.json" "%DEST%\manifest.json" >nul || goto fail
+fc /b "%~dp0%PLUGIN%\index.js" "%DEST%\index.js" >nul || goto fail
+fc /b "%~dp0%PLUGIN%\player.py" "%DEST%\player.py" >nul || goto fail
 echo Installed. Restart Stream Dock.
 pause
 exit /b 0

@@ -1,54 +1,109 @@
-// Linux integration check with a simulated Windows worker and a local Stream Dock host.
+// Linux integration test with a simulated Windows worker and Stream Dock host.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const {spawn} = require('node:child_process');
+const {once} = require('node:events');
 const root = path.resolve(__dirname, '../io.noxfor63.yandexmusic.sdPlugin');
 const {WebSocketServer} = require(path.join(root, 'vendor/ws'));
 const manifest = require(path.join(root, 'manifest.json'));
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dock-test-'));
-const executable = path.join(tmp, 'Noxfor63/YandexMusicDock/venv/Scripts/python.exe');
-fs.mkdirSync(path.dirname(executable), {recursive: true});
-fs.writeFileSync(executable, `#!/usr/bin/env node
+
+async function exercise(mode) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dock-test-'));
+  const appDir = path.join(tmp, 'Noxfor63/YandexMusicDock');
+  const executable = path.join(appDir, 'venv/Scripts/python.exe');
+  const commands = path.join(tmp, 'commands');
+  if (mode !== 'missing') {
+    fs.mkdirSync(path.dirname(executable), {recursive: true});
+    fs.writeFileSync(executable, `#!/usr/bin/env node
 require('readline').createInterface({input:process.stdin}).on('line', line => {
-  const msg=JSON.parse(line);
+  const msg = JSON.parse(line);
   require('fs').appendFileSync(process.env.TEST_LOG, msg.action+'\\n');
-  console.log(JSON.stringify({...msg,image:'sample-card'}));
+  if (process.env.TEST_MODE === 'hung') return;
+  console.log(JSON.stringify({...msg, image:'sample-card', error:msg.action==='previous'?'OSError':undefined}));
 });`, {mode:0o755});
-const server = new WebSocketServer({host:'127.0.0.1', port:0});
-const log = path.join(tmp, 'commands');
-let child;
-const timeout = setTimeout(() => {child?.kill(); throw Error('No response from plugin');}, 8000);
-server.on('listening', () => {
-  child = spawn(process.execPath, [path.join(root, 'index.js'), '-port', server.address().port,
-    '-pluginUUID','test','-registerEvent','registerPlugin'], {env:{...process.env, LOCALAPPDATA:tmp, TEST_LOG:log}});
-});
-server.on('connection', socket => socket.on('message', raw => {
-  const msg = JSON.parse(raw);
-  if (msg.event === 'registerPlugin') {
-    assert.equal(msg.uuid, 'test');
-    assert.equal(manifest.Actions.length, 6);
-    for (const {UUID:action, Icon} of manifest.Actions) {
-      assert.ok(fs.existsSync(path.join(root, Icon)));
-      socket.send(JSON.stringify({action, context:action, event:action.endsWith('.track')?'willAppear':'keyDown'}));
-    }
-  } else if (msg.event === 'setImage') {
-    assert.equal(msg.payload.image,'sample-card');
-    assert.ok(msg.context.endsWith('.track'));
-    child.once('exit', code => {
-      clearTimeout(timeout);
-      assert.equal(code,0);
-      assert.deepEqual([...new Set(fs.readFileSync(log,'utf8').trim().split('\n'))].sort(),
-        ['louder','next','previous','quieter','toggle','track']);
-      fs.rmSync(tmp,{recursive:true,force:true});
-      console.log('Six actions verified');
-    });
-    // Confirm commands have reached the worker before closing the host.
-    const drain = setInterval(() => {
-      if (fs.readFileSync(log,'utf8').trim().split('\n').length >= 6) {
-        clearInterval(drain); socket.close(); server.close();
-      }
-    },10);
   }
-}));
+  const server = new WebSocketServer({host:'127.0.0.1', port:0});
+  await once(server, 'listening');
+  // Vary flag order; the SDK fields must be taken from their named argument.
+  const child = spawn(process.execPath, [path.join(root, manifest.CodePathWin),
+    '-pluginUUID', 'private-uuid', '-registerEvent', 'registerPlugin',
+    '-port', server.address().port, '-info', '{}'], {
+    env: {...process.env, LOCALAPPDATA:tmp, TEST_LOG:commands, TEST_MODE:mode}
+  });
+  let timer;
+  try {
+    await Promise.race([
+      new Promise((resolve, reject) => {
+        timer = setTimeout(() => reject(Error('No response from plugin')), mode === 'hung' ? 21000 : 6000);
+      }),
+      verifyEvents(server, child, mode)
+    ]);
+    const trace = fs.readFileSync(path.join(appDir, 'dock.log'), 'utf8');
+    for (const marker of ['host startup', 'host registration sent', 'host willAppear track', 'host disconnected']) {
+      assert.ok(trace.includes(marker), marker);
+    }
+    assert.doesNotMatch(trace, /private-uuid|private-context|sample-card/);
+    if (mode === 'ok') {
+      assert.ok(trace.includes('player track available'));
+      assert.ok(trace.includes('player previous error OSError'));
+      assert.deepEqual(fs.readFileSync(commands, 'utf8').trim().split('\n').sort(),
+        ['louder','next','next','previous','quieter','toggle','track']);
+    } else if (mode === 'hung') {
+      assert.ok(trace.includes('player response timeout'));
+    } else {
+      assert.ok(trace.includes('player launch error ENOENT'));
+    }
+  } finally {
+    clearTimeout(timer);
+    child.kill();
+    for (const socket of server.clients) socket.terminate();
+    server.close();
+    fs.rmSync(tmp, {recursive:true, force:true});
+  }
+}
+
+async function verifyEvents(server, child, mode) {
+  const exit = once(child, 'exit');
+  const [socket] = await once(server, 'connection');
+  let imageReceived = false;
+  let alertReceived = false;
+  socket.on('message', raw => {
+    const msg = JSON.parse(raw);
+    if (msg.event === 'registerPlugin') {
+      assert.equal(msg.uuid, 'private-uuid');
+      assert.equal(manifest.Actions.length, 6);
+      for (const {UUID:action, Icon} of manifest.Actions) {
+        assert.ok(fs.existsSync(path.join(root, Icon)));
+        const name = action.split('.').pop();
+        const context = 'private-context-' + name;
+        socket.send(JSON.stringify({action, context, event:'willAppear'}));
+        if (mode === 'ok' && name !== 'track') {
+          if (name !== 'louder') socket.send(JSON.stringify({action, context, event:'keyDown'}));
+          if (name === 'next') socket.send(JSON.stringify({action, context, event:'keyDown'}));
+          socket.send(JSON.stringify({action, context, event:'keyUp'}));
+        }
+      }
+    } else if (msg.event === 'setImage' && mode === 'ok') {
+      assert.equal(msg.payload.image, 'sample-card');
+      assert.equal(msg.context, 'private-context-track');
+      imageReceived = true;
+    } else if (msg.event === 'showAlert' && mode === 'ok') {
+      assert.equal(msg.context, 'private-context-previous');
+      alertReceived = true;
+    } else if (mode !== 'ok' && msg.event === 'setTitle' && msg.payload.title === 'Сбой плагина') {
+      socket.close();
+    }
+    if (imageReceived && alertReceived) socket.close();
+  });
+  const [code] = await exit;
+  assert.equal(code, 0);
+}
+
+(async () => {
+  await exercise('ok');
+  await exercise('missing');
+  await exercise('hung');
+  console.log('Six actions, key press variants, diagnostics and worker failures verified');
+})().catch(error => { console.error(error); process.exitCode = 1; });

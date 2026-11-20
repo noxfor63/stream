@@ -5,13 +5,26 @@ import json
 import os
 import re
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 
+class NoMusicAudioSession(RuntimeError):
+    pass
+
+
+class NoMusicMediaSession(RuntimeError):
+    pass
+
+
+class PlayerDeclinedCommand(RuntimeError):
+    pass
+
+
 def is_music(identifier):
-    name = re.split(r"[\\/]", identifier)[-1].casefold()
+    name = re.split(r"[\\/]", identifier.strip())[-1].casefold()
     return bool(re.search(r"(?:^|[.!_-])(?:yandex[ ._-]*(?:desktop[ ._-]*)?music|яндекс[ ._-]*музыка)(?:$|[.!_-])", name))
 
 
@@ -37,53 +50,139 @@ def card(title, artist, artwork, font_path):
         font = ImageFont.truetype(str(font_path), size)
         draw.text((4, y), fit(draw, value, font), font=font, fill=color)
     encoded = io.BytesIO()
-    image.save(encoded, format="JPEG", quality=88)
-    return "data:image/jpeg;base64," + base64.b64encode(encoded.getvalue()).decode("ascii")
+    image.save(encoded, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(encoded.getvalue()).decode("ascii")
 
 
-async def thumbnail(reference):
+async def thumbnail(media):
     from winrt.windows.storage.streams import DataReader
 
-    if reference:
-        try:
-            with await reference.open_read_async() as stream:
-                if 0 < stream.size <= 16 * 1024 * 1024:
-                    with DataReader(stream.get_input_stream_at(0)) as reader:
-                        data = bytearray(await reader.load_async(stream.size))
-                        reader.read_bytes(data)
-                        return data
-        except OSError:
-            pass
+    # Artwork is optional. A broken thumbnail must not stall later key presses.
+    try:
+        async with asyncio.timeout(1.5):
+            reference = media.thumbnail
+            if reference is not None:
+                with await reference.open_read_async() as stream:
+                    if 0 < stream.size <= 16 * 1024 * 1024:
+                        with DataReader(stream.get_input_stream_at(0)) as reader:
+                            data = bytearray(await reader.load_async(stream.size))
+                            reader.read_bytes(data)
+                            return data
+    except (OSError, RuntimeError, ValueError):
+        pass
     return None
 
 
-def volume(step):
-    from pycaw.pycaw import AudioUtilities
+def music_session(manager):
+    from winrt.windows.media.control import GlobalSystemMediaTransportControlsSessionPlaybackStatus as Status
+
+    selected = None
+    for session in manager.get_sessions():
+        try:
+            if not is_music(session.source_app_user_model_id):
+                continue
+            info = session.get_playback_info()
+            if info and info.playback_status == Status.PLAYING:
+                return session
+            if selected is None:
+                selected = session
+        except OSError:  # A media session can close during enumeration.
+            continue
+    return selected
+
+
+def audio_sessions():
+    from comtypes import COMError
+    from pycaw.pycaw import (
+        AudioSession, AudioUtilities, DEVICE_STATE, EDataFlow, IAudioSessionControl2,
+    )
+
+    devices = AudioUtilities.GetAllDevices(EDataFlow.eRender.value, DEVICE_STATE.ACTIVE.value)
+    for device in devices:
+        try:
+            sessions = device.AudioSessionManager.GetSessionEnumerator()
+            count = sessions.GetCount()
+        except COMError:
+            continue  # The output may disappear during enumeration.
+        for index in range(count):
+            try:
+                control = sessions.GetSession(index)
+                if control is not None:
+                    session = AudioSession(control.QueryInterface(IAudioSessionControl2))
+                    if session.State != 2:  # AudioSessionStateExpired
+                        yield session
+            except COMError:
+                continue
+
+
+def is_music_audio(session):
     from psutil import NoSuchProcess, AccessDenied
 
+    try:
+        process = session.Process
+        return process is not None and is_music(process.name())
+    except (NoSuchProcess, AccessDenied):
+        return False
+
+
+def volume(step):
+    from comtypes import COMError
+
     changed = False
-    for session in AudioUtilities.GetAllSessions():
+    for session in audio_sessions():
         try:
-            process = session.Process
-            if process and is_music(process.name()):
+            if is_music_audio(session):
                 mixer = session.SimpleAudioVolume
                 level = min(1, max(0, mixer.GetMasterVolume() + step))
                 mixer.SetMasterVolume(level, None)
                 changed = True
-        except (NoSuchProcess, AccessDenied):
+        except COMError:
             continue
     if not changed:
-        raise RuntimeError("Audio session unavailable")
+        raise NoMusicAudioSession("No matching Windows audio session")
+
+
+async def media_action(manager, action, font):
+    session = music_session(manager)
+    if action == "track":
+        if session is None:
+            return {}
+        media = await session.try_get_media_properties_async()
+        if media is None or not media.title:
+            return {}
+        return {"image": card(media.title, media.artist, await thumbnail(media), font)}
+    if session is None:
+        raise NoMusicMediaSession("No matching Windows media session")
+    if action == "toggle":
+        from winrt.windows.media.control import GlobalSystemMediaTransportControlsSessionPlaybackStatus as Status
+
+        info = session.get_playback_info()
+        if info.playback_status == Status.PLAYING and info.controls.is_pause_enabled:
+            accepted = await session.try_pause_async()
+        elif info.playback_status != Status.PLAYING and info.controls.is_play_enabled:
+            accepted = await session.try_play_async()
+        else:
+            accepted = await session.try_toggle_play_pause_async()
+    elif action == "next":
+        accepted = await session.try_skip_next_async()
+    elif action == "previous":
+        accepted = await session.try_skip_previous_async()
+    else:
+        raise ValueError("Unknown action")
+    if not accepted:
+        raise PlayerDeclinedCommand("Command declined by player")
+    return {}
 
 
 async def main():
-    from winrt.windows.media.control import GlobalSystemMediaTransportControlsSessionManager
-    from pycaw.pycaw import AudioUtilities
+    from winrt.windows.media.control import GlobalSystemMediaTransportControlsSessionManager as Manager
 
-    manager = await GlobalSystemMediaTransportControlsSessionManager.request_async()
+    manager = None
     if "--check" in sys.argv:
-        manager.get_sessions()
-        AudioUtilities.GetAllSessions()
+        # Loading the native bindings is sufficient at install time. Check live
+        # service availability on demand so an idle desktop can still install.
+        from pycaw.pycaw import AudioUtilities
+        from winrt.windows.storage.streams import DataReader
         return
     font = Path(os.environ["WINDIR"]) / "Fonts" / "segoeui.ttf"
     for line in sys.stdin:
@@ -93,25 +192,31 @@ async def main():
             if action in ("louder", "quieter"):
                 volume(0.05 if action == "louder" else -0.05)
             else:
-                session = next((s for s in manager.get_sessions() if is_music(s.source_app_user_model_id)), None)
-                if action == "track":
-                    if session:
-                        media = await session.try_get_media_properties_async()
-                        if media.title:
-                            request["image"] = card(media.title, media.artist, await thumbnail(media.thumbnail), font)
-                elif session:
-                    commands = {"next": session.try_skip_next_async,
-                                "previous": session.try_skip_previous_async,
-                                "toggle": session.try_toggle_play_pause_async}
-                    if not await commands[action]():
-                        raise RuntimeError("Command declined")
-                else:
-                    raise RuntimeError("Player unavailable")
+                async with asyncio.timeout(6):
+                    if manager is None:
+                        manager = await Manager.request_async()
+                    request.update(await media_action(manager, action, font))
         except Exception as exc:
+            if isinstance(exc, (OSError, TimeoutError)):
+                manager = None
             request["error"] = type(exc).__name__
             print(f"{action}: {exc}", file=sys.stderr)
         print(json.dumps(request), flush=True)
 
 
+@contextmanager
+def windows_apartment():
+    # Pycaw imports comtypes. Both Windows APIs use this worker's MTA thread.
+    sys.coinit_flags = 0
+    from winrt.runtime import ApartmentType, init_apartment, uninit_apartment
+
+    init_apartment(ApartmentType.MULTI_THREADED)
+    try:
+        yield
+    finally:
+        uninit_apartment()
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    with windows_apartment():
+        asyncio.run(main())
