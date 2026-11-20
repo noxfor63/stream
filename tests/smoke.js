@@ -84,7 +84,7 @@ async function verifyEvents(server, child, mode) {
       if (mode === 'layout') {
         for (const [id, x, y] of [['a',0,0],['b',1,0],['c',0,1],['d',1,1]]) {
           socket.send(JSON.stringify({event:'willAppear', action:manifest.Actions[0].UUID, context:id,
-            device:'panel', payload:{coordinates:{column:x, row:y}}}));
+            device:'panel', payload:{coordinates:{column:String(x), row:String(y)}}}));
         }
         return;
       }

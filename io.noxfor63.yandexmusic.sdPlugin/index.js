@@ -81,6 +81,37 @@ function request(action, context, fields = {}) {
   worker.stdin.write(JSON.stringify({action, context, ...fields}) + '\n');
   return true;
 }
+function axis(value) {
+  if (typeof value === 'string' && /^\d+$/.test(value)) value = Number(value);
+  return Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
+function updateCard(context, payload, device) {
+  const previous = cards.get(context);
+  const coords = payload?.coordinates;
+  const column = axis(coords?.column);
+  const row = axis(coords?.row);
+  const positioned = column !== undefined && row !== undefined;
+  const settings = payload?.settings;
+  const requested = settings?.coverCorner;
+  const corner = ['top-left', 'top-right', 'bottom-left', 'bottom-right'].includes(requested)
+    ? requested : 'auto';
+  const card = {
+    context,
+    device: (typeof device === 'string' ? device : device?.id) || previous?.device || singleDevice,
+    column: positioned ? column : previous?.column,
+    row: positioned ? row : previous?.row,
+    coverCorner: settings ? corner : previous?.coverCorner || 'auto'
+  };
+  if (previous && card.device === previous.device && card.column === previous.column &&
+      card.row === previous.row && card.coverCorner === previous.coverCorner) return;
+  cards.set(context, card);
+  trace('cover ' + card.coverCorner + ' ' + (card.column === undefined ? 'no coordinates' : card.column + ',' + card.row));
+  displayed.delete(context);
+  layoutVersion++;
+  refresh();
+}
+
 function refresh() {
   if (cards.size && !pending) {
     pending = request('track', undefined, {layoutVersion, cards: [...cards.values()]});
@@ -172,12 +203,13 @@ dock.on('message', raw => {
     trace('host ' + event + ' ' + name);
   }
   if (name === 'track') {
-    if (event === 'willAppear' || (event === 'didReceiveSettings' && cards.has(context) && payload?.coordinates)) {
-      cards.set(context, {context, device: device ?? cards.get(context)?.device ?? singleDevice,
-        column: payload?.coordinates?.column, row: payload?.coordinates?.row});
-      displayed.delete(context);
-      layoutVersion++;
-      refresh();
+    if (event === 'willAppear' || (cards.has(context) && event === 'didReceiveSettings')) {
+      updateCard(context, payload, device);
+      if (event === 'willAppear' && !payload?.settings) send('getSettings', context);
+    } else if (event === 'sendToPlugin' && cards.has(payload?.trackContext) && typeof payload.coverCorner === 'string') {
+      updateCard(payload.trackContext, {settings: {coverCorner: payload.coverCorner}});
+    } else if (cards.has(context) && payload?.coordinates && ['keyDown', 'keyUp', 'titleParametersDidChange'].includes(event)) {
+      updateCard(context, {coordinates: payload.coordinates}, device);
     } else if (event === 'willDisappear') {
       cards.delete(context);
       displayed.delete(context);

@@ -67,10 +67,18 @@ def png(image):
     return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
+CORNERS = {"top-left": (0, 0), "top-right": (1, 0),
+           "bottom-left": (0, 1), "bottom-right": (1, 1)}
+
+
 def rectangles(cards):
     """Combine only solid, edge-connected rectangles on the same device."""
     devices = {}
     for card in cards:
+        corner = CORNERS.get(card.get("coverCorner"))
+        if corner is not None:
+            yield 2, 2, [(card["context"], *corner)]
+            continue
         x, y = card.get("column"), card.get("row")
         device = card.get("device")
         if not device or type(x) is not int or type(y) is not int:

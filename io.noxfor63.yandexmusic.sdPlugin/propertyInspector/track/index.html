@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Текущий трек</title>
+  <style>
+    :root { color-scheme: dark; font: 14px "Segoe UI", sans-serif; }
+    body { background: #292929; color: #eee; margin: 12px; }
+    label, select { display: block; }
+    select { margin-top: 6px; padding: 6px; max-width: 100%; font: inherit; }
+  </style>
+</head>
+<body>
+  <label for="corner">Часть обложки</label>
+  <select id="corner" disabled>
+    <option value="auto">Автоматически</option>
+    <option value="top-left">Верхняя левая</option>
+    <option value="top-right">Верхняя правая</option>
+    <option value="bottom-left">Нижняя левая</option>
+    <option value="bottom-right">Нижняя правая</option>
+  </select>
+  <script src="index.js"></script>
+</body>
+</html>

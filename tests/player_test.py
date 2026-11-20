@@ -129,6 +129,30 @@ class CoverLayouts(unittest.TestCase):
         fallback = player.png(player.card_canvas(*args, 1, 1))
         self.assertTrue(all(tiles[c["context"]] == fallback for c in others))
 
+    def test_manual_quadrants_without_host_positions(self):
+        cards = [{"context": name, "coverCorner": name} for name in
+                 ("bottom-right", "top-left", "bottom-left", "top-right")]
+        # Each key must work even when the host reports identical coordinates.
+        for card in cards[:2]:
+            card.update(device="deck", row=0, column=0)
+        art = Image.new("RGB", (288, 288))
+        colors = {"top-left":"red", "top-right":"green", "bottom-left":"blue", "bottom-right":"yellow"}
+        for name, color in colors.items():
+            x = 144 if name.endswith("right") else 0
+            y = 144 if name.startswith("bottom") else 0
+            art.paste(color, (x, y, x+144, y+144))
+        buf = BytesIO()
+        art.save(buf, "PNG")
+        args = ("Трек", "Исполнитель", buf.getvalue(), "DejaVuSans.ttf")
+        images = player.card_tiles(*args, cards)
+        combined = Image.new("RGB", (288, 288))
+        for name in colors:
+            x = 144 if name.endswith("right") else 0
+            y = 144 if name.startswith("bottom") else 0
+            tile = Image.open(BytesIO(base64.b64decode(images[name].split(",")[1])))
+            combined.paste(tile, (x, y))
+        self.assertEqual(combined.tobytes(), player.card_canvas(*args, 2, 2).tobytes())
+
     def test_partial_rectangle_and_missing_coordinates_remain_readable(self):
         cards = [dict(context=str(i), device="a", column=x, row=y)
                  for i, (x,y) in enumerate([(0,0),(0,1),(1,0)])]
