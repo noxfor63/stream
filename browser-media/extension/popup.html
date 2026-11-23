@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Медиапульт</title>
+  <style>
+    :root { color-scheme: dark; font: 14px "Segoe UI", sans-serif; }
+    body { width: 300px; margin: 16px; background: #19232b; color: #f0f5f9; }
+    p { line-height: 1.5; }
+    label { display: block; margin: 14px 0 6px; }
+    select { width: 100%; padding: 8px; font: inherit; background: #273642; color: inherit; }
+    #help { color: #bbcbd7; }
+  </style>
+</head>
+<body>
+  <p id="status" role="status">Проверка связи…</p>
+  <label for="player">Плеер на панели</label>
+  <select id="player" disabled></select>
+  <p id="help">Включите видео или музыку во вкладке браузера.</p>
+  <script src="popup.js"></script>
+</body>
+</html>

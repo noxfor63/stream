@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Экран плеера</title>
+  <style>
+    :root {color-scheme:dark;font:14px "Segoe UI",sans-serif}
+    body {margin:12px;background:#292929;color:#eee}
+    label,select {display:block}
+    select {font:inherit;margin-top:6px;padding:6px;max-width:100%}
+  </style>
+</head>
+<body>
+  <label for="tile">Часть экрана</label>
+  <select id="tile" disabled>
+    <option value="auto">Автоматически</option>
+    <option value="0">Верхняя левая</option>
+    <option value="1">Верхняя средняя</option>
+    <option value="2">Верхняя правая</option>
+    <option value="3">Нижняя левая</option>
+    <option value="4">Нижняя средняя</option>
+    <option value="5">Нижняя правая</option>
+  </select>
+  <script src="index.js"></script>
+</body>
+</html>

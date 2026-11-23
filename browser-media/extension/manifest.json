@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "Медиапульт для Stream Dock",
+  "version": "1.0.0",
+  "description": "Управление аудио и видео во вкладках браузера с панели Stream Dock.",
+  "minimum_chrome_version": "116",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwaZqe65v/hkFJR+Mk1TyMAUcIfkJcpNkSeTwYt3n8m2X0od6+oDT5zXNUFu8J5e7sG4NITDuLFHpAtTr/A8hQUPKBX/K8gs+ylbeF80M3eTXisoCH95nxiipnJHod44osQW1UESCNgBOx1S2weClJQ440y0ohJ9gJIdNSz1UB7/LiLiICBuj8q1alQQaqDCr59LJJR/tiWw+98MzEImMBSo3qr+kvjsG8Nc0RY+hOrZSCoHFNgWoaYLPmHp2ttfE6WMHuxCGEZ7YHm+//IlmQnQwWNFKAJrKqCfiRjkdtTRGrrFLPlj9OoA7SqXTLMIPRUvnaKg55XsPHih0Fjf/YwIDAQAB",
+  "permissions": [
+    "alarms"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "media.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": true,
+      "match_about_blank": true
+    }
+  ],
+  "action": {
+    "default_title": "Медиапульт для Stream Dock",
+    "default_popup": "popup.html"
+  },
+  "icons": {
+    "128": "icon.png"
+  }
+}

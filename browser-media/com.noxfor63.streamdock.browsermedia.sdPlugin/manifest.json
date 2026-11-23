@@ -1,0 +1,170 @@
+{
+  "Name": "Пульт браузера",
+  "Category": "Пульт браузера",
+  "Description": "Экран 3×2 и управление медиаплеерами в браузере",
+  "Author": "noxfor63",
+  "Actions": [
+    {
+      "UUID": "com.noxfor63.streamdock.browsermedia.player",
+      "Name": "Экран плеера",
+      "Tooltip": "Экран плеера",
+      "Icon": "icons/player.png",
+      "States": [
+        {
+          "Image": "icons/player.png",
+          "FontSize": "9",
+          "TitleAlignment": "bottom"
+        }
+      ],
+      "Controllers": [
+        "Keypad"
+      ],
+      "UserTitleEnabled": false,
+      "SupportedInMultiActions": false,
+      "PropertyInspectorPath": "propertyInspector/index.html"
+    },
+    {
+      "UUID": "com.noxfor63.streamdock.browsermedia.toggle",
+      "Name": "Пауза / воспроизведение",
+      "Tooltip": "Пауза / воспроизведение",
+      "Icon": "icons/toggle.png",
+      "States": [
+        {
+          "Image": "icons/toggle.png",
+          "FontSize": "9",
+          "TitleAlignment": "bottom"
+        }
+      ],
+      "Controllers": [
+        "Keypad"
+      ],
+      "UserTitleEnabled": false,
+      "SupportedInMultiActions": false
+    },
+    {
+      "UUID": "com.noxfor63.streamdock.browsermedia.back",
+      "Name": "Назад на 10 секунд",
+      "Tooltip": "Назад на 10 секунд",
+      "Icon": "icons/back.png",
+      "States": [
+        {
+          "Image": "icons/back.png",
+          "FontSize": "9",
+          "TitleAlignment": "bottom"
+        }
+      ],
+      "Controllers": [
+        "Keypad"
+      ],
+      "UserTitleEnabled": false,
+      "SupportedInMultiActions": false
+    },
+    {
+      "UUID": "com.noxfor63.streamdock.browsermedia.forward",
+      "Name": "Вперёд на 10 секунд",
+      "Tooltip": "Вперёд на 10 секунд",
+      "Icon": "icons/forward.png",
+      "States": [
+        {
+          "Image": "icons/forward.png",
+          "FontSize": "9",
+          "TitleAlignment": "bottom"
+        }
+      ],
+      "Controllers": [
+        "Keypad"
+      ],
+      "UserTitleEnabled": false,
+      "SupportedInMultiActions": false
+    },
+    {
+      "UUID": "com.noxfor63.streamdock.browsermedia.quieter",
+      "Name": "Тише",
+      "Tooltip": "Тише",
+      "Icon": "icons/quieter.png",
+      "States": [
+        {
+          "Image": "icons/quieter.png",
+          "FontSize": "9",
+          "TitleAlignment": "bottom"
+        }
+      ],
+      "Controllers": [
+        "Keypad"
+      ],
+      "UserTitleEnabled": false,
+      "SupportedInMultiActions": false
+    },
+    {
+      "UUID": "com.noxfor63.streamdock.browsermedia.louder",
+      "Name": "Громче",
+      "Tooltip": "Громче",
+      "Icon": "icons/louder.png",
+      "States": [
+        {
+          "Image": "icons/louder.png",
+          "FontSize": "9",
+          "TitleAlignment": "bottom"
+        }
+      ],
+      "Controllers": [
+        "Keypad"
+      ],
+      "UserTitleEnabled": false,
+      "SupportedInMultiActions": false
+    },
+    {
+      "UUID": "com.noxfor63.streamdock.browsermedia.mute",
+      "Name": "Звук вкл. / выкл.",
+      "Tooltip": "Звук вкл. / выкл.",
+      "Icon": "icons/mute.png",
+      "States": [
+        {
+          "Image": "icons/mute.png",
+          "FontSize": "9",
+          "TitleAlignment": "bottom"
+        }
+      ],
+      "Controllers": [
+        "Keypad"
+      ],
+      "UserTitleEnabled": false,
+      "SupportedInMultiActions": false
+    },
+    {
+      "UUID": "com.noxfor63.streamdock.browsermedia.cycle",
+      "Name": "Сменить плеер",
+      "Tooltip": "Сменить плеер",
+      "Icon": "icons/cycle.png",
+      "States": [
+        {
+          "Image": "icons/cycle.png",
+          "FontSize": "9",
+          "TitleAlignment": "bottom"
+        }
+      ],
+      "Controllers": [
+        "Keypad"
+      ],
+      "UserTitleEnabled": false,
+      "SupportedInMultiActions": false
+    }
+  ],
+  "Icon": "icons/player.png",
+  "CategoryIcon": "icons/player.png",
+  "CodePathWin": "index.js",
+  "SDKVersion": 3,
+  "Nodejs": {
+    "Version": "20"
+  },
+  "Version": "1.0.0",
+  "OS": [
+    {
+      "Platform": "windows",
+      "MinimumVersion": "10"
+    }
+  ],
+  "Software": {
+    "MinimumVersion": "3.10.188.226"
+  }
+}
