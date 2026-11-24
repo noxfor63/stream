@@ -3,6 +3,13 @@
   'use strict';
   const keySize = 144;
   const font = '"Segoe UI", Arial, sans-serif';
+  // The worker renders one frame at a time. Reuse its eight drawing surfaces
+  // instead of allocating new canvases for every video frame.
+  const surfaces = new Map();
+  function surface(name, width, height) {
+    if (!surfaces.has(name)) surfaces.set(name, new OffscreenCanvas(width, height));
+    return surfaces.get(name);
+  }
 
   function timeLabel(seconds) {
     const whole = Math.floor(Math.max(0, seconds));
@@ -72,7 +79,7 @@
   function drawPlayer(state, artwork, single) {
     const width = keySize * (single ? 1 : 3);
     const height = keySize * (single ? 1 : 2);
-    const canvas = new OffscreenCanvas(width, height);
+    const canvas = surface(single ? 'single' : 'large', width, height);
     const ctx = canvas.getContext('2d', {alpha: false});
     const left = single ? 7 : 14;
     const textWidth = width - 2 * left;
@@ -115,7 +122,7 @@
   function drawVideo(frame, single) {
     const width = keySize * (single ? 1 : 3);
     const height = keySize * (single ? 1 : 2);
-    const canvas = new OffscreenCanvas(width, height);
+    const canvas = surface(single ? 'single' : 'large', width, height);
     const ctx = canvas.getContext('2d', {alpha: false});
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, width, height);
@@ -144,7 +151,7 @@
     const parts = [];
     for (let row = 0; row < 2; row++) {
       for (let col = 0; col < 3; col++) {
-        const tile = new OffscreenCanvas(keySize, keySize);
+        const tile = surface('tile' + (row * 3 + col), keySize, keySize);
         const ctx = tile.getContext('2d', {alpha: false});
         ctx.drawImage(large, col * keySize, row * keySize, keySize, keySize, 0, 0, keySize, keySize);
         parts.push(png(tile));

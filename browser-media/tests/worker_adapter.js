@@ -13,6 +13,14 @@ const bus = new WebSocket(endpoint + '/runtime');
 globalThis.chrome = {
   runtime: {id: 'jfglpkafjfnniknfhmjnhamjnbgbijai',
     onMessage: {addListener: fn => messages.push(fn)}, onConnect: {addListener: fn => listeners.push(fn)}, onStartup: {addListener() {}}},
+  storage: {local: {
+    get: async () => (await fetch(location.origin + '/settings')).json(),
+    set: async settings => {
+      const response = await fetch(location.origin + '/settings', {method:'POST',
+        headers:{'Content-Type':'application/json'}, body:JSON.stringify(settings)});
+      if (!response.ok) throw new Error('Settings failed');
+    }
+  }},
   alarms: {create() {}, onAlarm: {addListener() {}}}
 };
 bus.onmessage = e => {

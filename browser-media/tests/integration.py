@@ -50,13 +50,24 @@ async def wait_until(check, description, timeout=12):
     raise AssertionError('Timeout: ' + description)
 
 
-async def exercise(directory, emulate_extension=False):
+async def exercise(directory, emulate_extension=False, benchmark=False, min_fps=0):
     make_media(directory)
+    if benchmark:
+        subprocess.run(['ffmpeg', '-loglevel', 'error', '-f', 'lavfi', '-i',
+                        'testsrc2=size=432x288:rate=60', '-t', '12', '-c:v', 'libvpx',
+                        '-threads', '1', '-deadline', 'realtime', '-b:v', '2M',
+                        str(directory / 'motion.webm')], check=True)
     socket = None
     runtime_bus = None
     content_channels = {}
     runtime_ready = asyncio.Event()
     api_requests = {}
+    extension_settings = {}
+
+    async def settings_handler(request):
+        if request.method == 'POST':
+            extension_settings.update(await request.json())
+        return web.json_response(extension_settings)
 
     async def runtime_handler(request):
         nonlocal runtime_bus
@@ -127,6 +138,7 @@ async def exercise(directory, emulate_extension=False):
     levels = set()
     images = {}
     alerts = []
+    deliveries = []
 
     async def dock_handler(request):
         nonlocal socket
@@ -142,6 +154,7 @@ async def exercise(directory, emulate_extension=False):
             elif message['event'] == 'setImage':
                 data = message['payload']['image']
                 if data.startswith('data:image/png;base64,'):
+                    deliveries.append((time.monotonic(), message['context'], len(raw.data)))
                     with Image.open(io.BytesIO(base64.b64decode(data.split(',')[1]))) as image:
                         i = int(message['context'])
                         rgb = image.convert('RGB').getpixel((image.width // 2, image.height // 2))
@@ -166,10 +179,11 @@ async def exercise(directory, emulate_extension=False):
             return web.FileResponse(ROOT/'extension/render.js')
         if file == 'controller':
             return web.Response(text='<script>new Worker("/worker.js")</script>', content_type='text/html')
-        if file in ('movie.webm', 'song.wav'):
+        if file in ('movie.webm', 'song.wav', 'motion.webm'):
             return web.FileResponse(directory / file)
         pages = {
             'watch': '<title>Видео для проверки</title><video controls loop src="/movie.webm"></video>',
+            'motion': '<title>60 fps benchmark</title><video controls loop src="/motion.webm"></video>',
             'listen': '<title>Аудио</title><audio controls loop src="/song.wav"></audio>',
             'embed': f'<iframe src="http://localhost:{request.url.port}/listen" allow="autoplay"></iframe>',
             'restricted': f'<title>Ограниченные кадры</title><video controls loop src="http://localhost:{request.url.port}/movie.webm"></video>',
@@ -182,6 +196,8 @@ async def exercise(directory, emulate_extension=False):
     app = web.Application()
     app.router.add_get('/', dock_handler)
     app.router.add_post('/api', api_handler)
+    app.router.add_get('/settings', settings_handler)
+    app.router.add_post('/settings', settings_handler)
     app.router.add_get('/runtime', runtime_handler)
     app.router.add_get('/content', content_handler)
     app.router.add_get('/extension', extension_handler)
@@ -221,6 +237,17 @@ async def exercise(directory, emulate_extension=False):
                     script += '\n' + (ROOT/'extension/media.js').read_text()
                     await page.add_init_script(script)
 
+            async def open_popup():
+                popup = await ctx.new_page()
+                if emulate_extension:
+                    await popup.add_init_script("""window.chrome = {runtime:{sendMessage: async message =>
+                        (await fetch('/api', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(message)})).json()}};""")
+                await popup.goto(origin + '/popup.html' if emulate_extension else
+                                 'chrome-extension://jfglpkafjfnniknfhmjnhamjnbgbijai/popup.html')
+                await popup.locator('#fps').wait_for()
+                await popup.wait_for_function("!document.querySelector('#fps').disabled")
+                return popup
+
             video = ctx.pages[0]
             await add_content(video, 1)
             await video.goto(origin + '/watch')
@@ -230,6 +257,42 @@ async def exercise(directory, emulate_extension=False):
                 assert min(max(abs(tile_colors[i][c] - expected[c] * scale) for c in range(3))
                            for scale in (1, .66)) < 25, (i, tile_colors[i])
             print('Live video, both brightness levels and all six tile colors verified', flush=True)
+
+            if benchmark:
+                await video.goto(origin + '/motion')
+                await video.locator('video').evaluate('v => v.play()')
+                await asyncio.sleep(2)
+                start = time.monotonic()
+                await asyncio.sleep(6)
+                end = time.monotonic()
+                sample = [(context, size) for stamp, context, size in deliveries if start <= stamp < end]
+                rates = [sum(context == str(i) for context, _ in sample) / (end - start) for i in range(6)]
+                print(f'60 fps video → six keys: {min(rates):.1f}–{max(rates):.1f} updates/s per key; '
+                      f'{sum(size for _, size in sample) / (end - start) / 1024:.0f} KiB/s to simulated Stream Dock', flush=True)
+                assert min(rates) >= min_fps, (rates, min_fps)
+                popup = await open_popup()
+                assert await popup.locator('#fps').input_value() == '30'
+                await popup.locator('#fps').select_option('15')
+                await video.bring_to_front()
+                await asyncio.sleep(.5)
+                start = time.monotonic()
+                await asyncio.sleep(4)
+                end = time.monotonic()
+                sample = [(context, size) for stamp, context, size in deliveries if start <= stamp < end]
+                rates = [sum(context == str(i) for context, _ in sample) / (end - start) for i in range(6)]
+                assert 10 <= min(rates) <= max(rates) <= 16, rates
+                if emulate_extension:
+                    assert extension_settings['fps'] == 15, extension_settings
+                print(f'15 fps setting: {min(rates):.1f}–{max(rates):.1f} updates/s per key; setting saved', flush=True)
+                await popup.reload()
+                await popup.wait_for_function("document.querySelector('#fps').value === '15'")
+                await popup.locator('#fps').select_option('30')
+                if emulate_extension:
+                    await wait_until(lambda: extension_settings.get('fps') == 30, 'saved 30 fps')
+                await popup.close()
+                await video.goto(origin + '/watch')
+                await video.locator('video').evaluate('v => {v.volume = .6; return v.play()}')
+                await asyncio.sleep(.5)
 
             other = await ctx.new_page()
             await add_content(other, 2)
@@ -276,15 +339,12 @@ async def exercise(directory, emulate_extension=False):
             assert await values() == (.55, .75), await values()
             print('Selected-player routing across a video tab and cross-origin audio iframe verified', flush=True)
             if emulate_extension:
-                popup = await ctx.new_page()
-                await popup.add_init_script("""window.chrome = {runtime:{sendMessage: async message =>
-                    (await fetch('/api', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(message)})).json()}};""")
-                await popup.goto(origin+'/popup.html')
-                await popup.wait_for_function("document.querySelector('select').options.length === 2")
+                popup = await open_popup()
+                await popup.wait_for_function("document.querySelector('#player').options.length === 2")
                 assert 'установлена' in await popup.locator('#status').inner_text()
-                options = await popup.locator('option').evaluate_all("all => all.map(o=>({value:o.value, text:o.textContent}))")
+                options = await popup.locator('#player option').evaluate_all("all => all.map(o=>({value:o.value, text:o.textContent}))")
                 target = next(o['value'] for o in options if 'Видео для проверки' in o['text'])
-                await popup.locator('select').select_option(target)
+                await popup.locator('#player').select_option(target)
                 await asyncio.sleep(.25)
                 await press('quieter')
                 await video.wait_for_function("Math.abs(document.querySelector('video').volume - .50) < .001")
@@ -331,6 +391,8 @@ async def exercise(directory, emulate_extension=False):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--emulate-extension', action='store_true', help='Supply runtime APIs in a managed browser that blocks extensions')
+    parser.add_argument('--benchmark', action='store_true', help='Measure six-key delivery with a moving 60 fps video')
+    parser.add_argument('--min-fps', type=float, default=0, help='Require at least this many updates per second on every key')
     options = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='browser-media-test-') as tmp:
-        asyncio.run(exercise(Path(tmp), options.emulate_extension))
+        asyncio.run(exercise(Path(tmp), options.emulate_extension, options.benchmark, options.min_fps))

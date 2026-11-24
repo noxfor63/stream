@@ -17,6 +17,11 @@ let lastRenderStart = 0;
 let artwork;
 let artworkKey;
 let commandQueue = Promise.resolve();
+const frameRates = new Set([15, 20, 30]);
+let targetFps = 30;
+const settingsReady = chrome.storage.local.get('fps').then(settings => {
+  if (frameRates.has(settings.fps)) targetFps = settings.fps;
+}).catch(error => console.warn('Frame rate settings unavailable', error.name));
 
 function selected() {
   if (!sources.has(selectedKey)) {
@@ -122,14 +127,17 @@ async function bitmap(uri) {
   return createImageBitmap(await response.blob());
 }
 
-function scheduleRender(delay = 167) {
+function scheduleRender(delay = 0) {
   clearTimeout(renderTimer);
   if (socket?.readyState !== WebSocket.OPEN) return;
   if (rendering) {
     renderAgain = true;
     return;
   }
-  renderTimer = setTimeout(render, Math.max(delay, lastRenderStart + 167 - Date.now()));
+  // Budget from the beginning of the previous frame. Waiting a whole interval
+  // after PNG encoding reduced even the old 6 fps limit to about 5 fps.
+  renderTimer = setTimeout(render, Math.ceil(Math.max(delay,
+    lastRenderStart + 1000 / targetFps - performance.now())));
 }
 
 async function render() {
@@ -141,7 +149,7 @@ async function render() {
     return;
   }
   rendering = true;
-  lastRenderStart = Date.now();
+  lastRenderStart = performance.now();
   renderAgain = false;
   const source = selected();
   const key = source?.key;
@@ -180,8 +188,8 @@ async function render() {
   } finally {
     video?.close();
     rendering = false;
-    const fastVideo = selected()?.state.video && !selected()?.state.paused;
-    scheduleRender(renderAgain ? 0 : fastVideo ? 167 : 1000);
+    const fastVideo = Boolean(video) && selected()?.state.video && !selected()?.state.paused;
+    scheduleRender(renderAgain || fastVideo ? 0 : 1000);
   }
 }
 
@@ -238,15 +246,23 @@ connect();
 
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if (sender.id !== chrome.runtime.id || sender.tab) return;
-  if (message?.type === 'select' && typeof message.key === 'string' && sources.has(message.key)) {
-    selectedKey = message.key;
-    scheduleRender(0);
-  }
-  if (message?.type === 'status' || message?.type === 'select') {
+  if (!['status', 'select', 'fps'].includes(message?.type)) return;
+  settingsReady.then(async () => {
+    if (message.type === 'select' && typeof message.key === 'string' && sources.has(message.key)) {
+      selectedKey = message.key;
+      scheduleRender(0);
+    }
+    if (message.type === 'fps' && frameRates.has(message.fps)) {
+      await chrome.storage.local.set({fps: message.fps});
+      targetFps = message.fps;
+      scheduleRender(0);
+    }
     respond({
       connected: socket?.readyState === WebSocket.OPEN,
+      fps: targetFps,
       selected: selected()?.key,
       players: [...sources.values()].map(item => ({key:item.key, title:item.state.title, source:item.state.source}))
     });
-  }
+  }).catch(() => respond({error: true}));
+  return true;
 });
